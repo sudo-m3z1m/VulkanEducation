@@ -17,7 +17,7 @@ class VulkanManager
 public:
     VulkanManager()
     {
-        window = make_window();
+        make_window();
         start_vulkan();
         process();
         cleanup();
@@ -47,6 +47,7 @@ private:
     VkCommandPool command_pool;
     vector<VkCommandBuffer> command_buffers;
     uint32_t current_frame = 0;
+    bool frame_buffer_resized = false;
 
     vector<VkSemaphore> image_semaphores;
     vector<VkSemaphore> render_semaphores;
@@ -64,6 +65,8 @@ private:
     uint32_t get_graphics_queue_index();
     void add_surface();
     void add_swap_chain();
+    void recreate_swap_chain();
+    void remove_swap_chain();
     void add_image_views();
     VkSurfaceFormatKHR get_swap_surface_format();
     VkPresentModeKHR get_swap_present_mode();
@@ -82,7 +85,9 @@ private:
     void record_command_buffer(VkCommandBuffer buff, uint32_t image_index);
     void draw_frame();
     
-    GLFWwindow* make_window();
+    static void frame_buffer_resize_callback(GLFWwindow* window, int width, int height);
+
+    void make_window();
 };
 
 void VulkanManager::start_vulkan()
@@ -372,6 +377,28 @@ void VulkanManager::add_image_views()
     cout << "Create image views success!" << endl;
 }
 
+void VulkanManager::recreate_swap_chain()
+{
+    vkDeviceWaitIdle(logical_device);
+
+    remove_swap_chain();
+
+    add_swap_chain();
+    add_image_views();
+    add_framebuffers();
+}
+
+void VulkanManager::remove_swap_chain()
+{
+    for (VkFramebuffer framebuffer : swap_chain_framebuffers)
+        vkDestroyFramebuffer(logical_device, framebuffer, nullptr);
+
+    for (VkImageView image_view : swap_chain_image_views)
+        vkDestroyImageView(logical_device, image_view, nullptr);
+
+    vkDestroySwapchainKHR(logical_device, swap_chain, nullptr);
+}
+
 void VulkanManager::add_graphics_pipeline()
 {
     vector<VkDynamicState> dynamic_states = 
@@ -413,8 +440,6 @@ void VulkanManager::add_graphics_pipeline()
     viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport_state.viewportCount = 1;
     viewport_state.scissorCount = 1;
-    //viewport_state.pViewports = &viewport;
-    //viewport_state.pScissors = &scissors;
 
     rasterizer_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer_create_info.depthClampEnable = VK_FALSE;
@@ -661,23 +686,22 @@ void VulkanManager::record_command_buffer(VkCommandBuffer buff, uint32_t image_i
     render_pass_info.clearValueCount = 1;
     render_pass_info.pClearValues = &clear_color;
 
-    if (vkBeginCommandBuffer(buff, &begin_info) != VK_SUCCESS)
-        cout << "Begin recording error!" << endl;
-    vkCmdBeginRenderPass(buff, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(buff, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
     viewport.x = 0.0;
     viewport.y = 0.0;
     viewport.width = static_cast<float>(swap_chain_extent.width);
     viewport.height = static_cast<float>(swap_chain_extent.height);
     viewport.minDepth = 0.0;
     viewport.maxDepth = 1.0;
-    vkCmdSetViewport(buff, 0, 1, &viewport);
 
     scissors.offset = { 0, 0 };
     scissors.extent = swap_chain_extent;
-    vkCmdSetScissor(buff, 0, 1, &scissors);
 
+    if (vkBeginCommandBuffer(buff, &begin_info) != VK_SUCCESS)
+        cout << "Begin recording error!" << endl;
+    vkCmdBeginRenderPass(buff, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(buff, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdSetViewport(buff, 0, 1, &viewport);
+    vkCmdSetScissor(buff, 0, 1, &scissors);
     vkCmdDraw(buff, 3, 1, 0, 0);
     vkCmdEndRenderPass(buff);
 
@@ -726,14 +750,24 @@ void VulkanManager::draw_frame()
     VkQueue present_queue;
     VkPresentInfoKHR present_info{};
     VkSwapchainKHR swap_chains[] = { swap_chain };
+    VkResult acquire_next_image_result;
+    VkResult present_result;
 
     vkGetDeviceQueue(logical_device, graphics_family_index, 0, &graphics_queue);
     vkGetDeviceQueue(logical_device, present_family_index, 0, &present_queue);
 
     vkWaitForFences(logical_device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
+
+    acquire_next_image_result = vkAcquireNextImageKHR(logical_device, swap_chain, UINT64_MAX, image_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+    
+    if (acquire_next_image_result == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        recreate_swap_chain();
+        return;
+    }
+
     vkResetFences(logical_device, 1, &in_flight_fences[current_frame]);
 
-    vkAcquireNextImageKHR(logical_device, swap_chain, UINT64_MAX, image_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
     vkResetCommandBuffer(command_buffers[current_frame], 0);
     record_command_buffer(command_buffers[current_frame], image_index);
 
@@ -760,7 +794,13 @@ void VulkanManager::draw_frame()
     present_info.pImageIndices = &image_index;
     present_info.pResults = nullptr;
 
-    vkQueuePresentKHR(present_queue, &present_info);
+    present_result = vkQueuePresentKHR(present_queue, &present_info);
+
+    if (present_result == VK_ERROR_OUT_OF_DATE_KHR or present_result == VK_SUBOPTIMAL_KHR or frame_buffer_resized)
+    {
+        recreate_swap_chain();
+        frame_buffer_resized = false;
+    }
 
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -778,22 +818,17 @@ void VulkanManager::process()
 
 void VulkanManager::cleanup()
 {
+    remove_swap_chain();
     for (size_t sync_obj_index = 0; sync_obj_index < MAX_FRAMES_IN_FLIGHT; sync_obj_index++)
     {
         vkDestroySemaphore(logical_device, image_semaphores[sync_obj_index], nullptr);
         vkDestroySemaphore(logical_device, render_semaphores[sync_obj_index], nullptr);
         vkDestroyFence(logical_device, in_flight_fences[sync_obj_index], nullptr);
     }
-
     vkDestroyCommandPool(logical_device, command_pool, nullptr);
-    for (VkFramebuffer framebuffer : swap_chain_framebuffers)
-        vkDestroyFramebuffer(logical_device, framebuffer, nullptr);
     vkDestroyPipeline(logical_device, pipeline, nullptr);
     vkDestroyPipelineLayout(logical_device, pipeline_layout, nullptr);
     vkDestroyRenderPass(logical_device, render_pass, nullptr);
-    for (VkImageView image_view : swap_chain_image_views)
-        vkDestroyImageView(logical_device, image_view, nullptr);
-    vkDestroySwapchainKHR(logical_device, swap_chain, nullptr);
     vkDestroySurfaceKHR(vulkan_instance, surface, nullptr);
     vkDestroyInstance(vulkan_instance, nullptr);
 
@@ -801,18 +836,26 @@ void VulkanManager::cleanup()
     glfwTerminate();
 }
 
-GLFWwindow* VulkanManager::make_window()
+void VulkanManager::frame_buffer_resize_callback(GLFWwindow* window, int width, int height)
+{
+    VulkanManager* vulkan = reinterpret_cast<VulkanManager*>(glfwGetWindowUserPointer(window));
+    vulkan->frame_buffer_resized = true;
+}
+
+void VulkanManager::make_window()
 {
     int window_h = 640, window_w = 800;
 
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, false);
 
     cout << "Creating application window success!" << endl;
 
-    return glfwCreateWindow(window_w, window_h, "VulkanTestApplication", nullptr, nullptr);
+    window = glfwCreateWindow(window_w, window_h, "VulkanTestApplication", nullptr, nullptr);
+
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, frame_buffer_resize_callback);
 }
 
 int main()
