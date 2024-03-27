@@ -4,13 +4,48 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
 
 #include <stdexcept>
 #include <iostream>
 #include <vector>
 #include <fstream>
+#include <array>
 
 using namespace std;
+
+struct Vertex
+{
+    glm::vec2 position;
+    glm::vec3 color;
+
+    static VkVertexInputBindingDescription get_binding_description()
+    {
+        VkVertexInputBindingDescription binding_description{};
+        
+        binding_description.binding = 0;
+        binding_description.stride = sizeof(Vertex);
+        binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return binding_description;
+    }
+
+    static array<VkVertexInputAttributeDescription, 2> get_attribute_descriptions()
+    {
+        array<VkVertexInputAttributeDescription, 2> attribute_descriptions{};
+        attribute_descriptions[0].binding = 0;
+        attribute_descriptions[0].location = 0;
+        attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attribute_descriptions[0].offset = offsetof(Vertex, position);
+
+        attribute_descriptions[1].binding = 0;
+        attribute_descriptions[1].location = 1;
+        attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attribute_descriptions[1].offset = offsetof(Vertex, color);
+
+        return attribute_descriptions;
+    }
+};
 
 class VulkanManager 
 {
@@ -26,6 +61,12 @@ public:
 private:
     const int MAX_FRAMES_IN_FLIGHT = 2;
 
+    vector<Vertex> verticles =
+    {
+        {{0.3, -0.6}, {0.1, 0.2, 1.0}},
+        {{0.6, 0.4}, {0.0, 0.5, 0.5}},
+        {{-0.2, 0.5}, {1.0, 0.5, 1.0}}
+    };
     vector<const char*> device_extensions = 
     {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
@@ -48,6 +89,8 @@ private:
     vector<VkCommandBuffer> command_buffers;
     uint32_t current_frame = 0;
     bool frame_buffer_resized = false;
+    VkBuffer vertex_buffer;
+    VkDeviceMemory vertex_buffer_memory;
 
     vector<VkSemaphore> image_semaphores;
     vector<VkSemaphore> render_semaphores;
@@ -77,10 +120,12 @@ private:
     void add_command_pool();
     void add_command_buffers();
     void add_sync_objects();
+    void add_vertex_buffer();
     vector<char> get_shader_code(string filename);
     VkShaderModule get_shader_module(vector<char> shader_code);
     uint32_t get_graphics_family_index();
     uint32_t get_present_family_index();
+    uint32_t get_memory_type(uint32_t filter, VkMemoryPropertyFlags properties);
     
     void record_command_buffer(VkCommandBuffer buff, uint32_t image_index);
     void draw_frame();
@@ -102,6 +147,7 @@ void VulkanManager::start_vulkan()
     add_graphics_pipeline();
     add_framebuffers();
     add_command_pool();
+    add_vertex_buffer();
     add_command_buffers();
     add_sync_objects();
 }
@@ -179,6 +225,19 @@ uint32_t VulkanManager::get_present_family_index()
             return family_index;
     }
     return 0;
+}
+
+uint32_t VulkanManager::get_memory_type(uint32_t filter, VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties memory_properties;
+
+    vkGetPhysicalDeviceMemoryProperties(phys_device, &memory_properties);
+
+    for (uint32_t type = 0; type < memory_properties.memoryTypeCount; type++)
+    {
+        if ((filter & (1 << type)) and (memory_properties.memoryTypes[type].propertyFlags & properties) == properties)
+            return type;
+    }
 }
 
 VkPhysicalDevice VulkanManager::get_physical_device()
@@ -399,6 +458,41 @@ void VulkanManager::remove_swap_chain()
     vkDestroySwapchainKHR(logical_device, swap_chain, nullptr);
 }
 
+void VulkanManager::add_vertex_buffer()
+{
+    VkBufferCreateInfo vertex_buffer_create_info{};
+    VkMemoryRequirements memory_requirements{};
+    VkMemoryAllocateInfo allocate_info{};
+    void* data;
+
+    vertex_buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    vertex_buffer_create_info.size = sizeof(verticles[0]) * verticles.size();
+    vertex_buffer_create_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    vertex_buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(logical_device, &vertex_buffer_create_info, nullptr, &vertex_buffer) != VK_SUCCESS)
+    {
+        cout << "Creating vertex buffer error!" << endl;
+        return;
+    }
+
+    vkGetBufferMemoryRequirements(logical_device, vertex_buffer, &memory_requirements);
+
+    allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate_info.allocationSize = memory_requirements.size;
+    allocate_info.memoryTypeIndex = get_memory_type(memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(logical_device, &allocate_info, nullptr, &vertex_buffer_memory))
+    {
+        cout << "Allocating vertex buffer memory error!" << endl;
+        return;
+    }
+    vkBindBufferMemory(logical_device, vertex_buffer, vertex_buffer_memory, 0);
+    vkMapMemory(logical_device, vertex_buffer_memory, 0, vertex_buffer_create_info.size, 0, &data);
+    memcpy(data, verticles.data(), (size_t)vertex_buffer_create_info.size);
+    vkUnmapMemory(logical_device, vertex_buffer_memory);
+}
+
 void VulkanManager::add_graphics_pipeline()
 {
     vector<VkDynamicState> dynamic_states = 
@@ -411,6 +505,8 @@ void VulkanManager::add_graphics_pipeline()
 
     VkPipelineDynamicStateCreateInfo dynamic_states_create_info{};
     VkPipelineVertexInputStateCreateInfo vertex_input_create_info{};
+    VkVertexInputBindingDescription vertex_binding = Vertex::get_binding_description();
+    array<VkVertexInputAttributeDescription, 2> vertex_attributes = Vertex::get_attribute_descriptions();
     VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info{};
     VkPipelineViewportStateCreateInfo viewport_state{};
     VkPipelineRasterizationStateCreateInfo rasterizer_create_info{};
@@ -428,10 +524,10 @@ void VulkanManager::add_graphics_pipeline()
     dynamic_states_create_info.pDynamicStates = dynamic_states.data();
 
     vertex_input_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_create_info.vertexBindingDescriptionCount = 0;
-    vertex_input_create_info.pVertexBindingDescriptions = nullptr;
-    vertex_input_create_info.vertexAttributeDescriptionCount = 0;
-    vertex_input_create_info.pVertexAttributeDescriptions = nullptr;
+    vertex_input_create_info.vertexBindingDescriptionCount = 1;
+    vertex_input_create_info.pVertexBindingDescriptions = &vertex_binding;
+    vertex_input_create_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertex_attributes.size());
+    vertex_input_create_info.pVertexAttributeDescriptions = vertex_attributes.data();
 
     input_assembly_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     input_assembly_create_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -673,6 +769,8 @@ void VulkanManager::record_command_buffer(VkCommandBuffer buff, uint32_t image_i
     VkCommandBufferBeginInfo begin_info{};
     VkRenderPassBeginInfo render_pass_info{};
     VkClearValue clear_color = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+    VkBuffer vertex_buffers[] = { vertex_buffer };
+    VkDeviceSize offsets[] = { 0 };
     
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = 0;
@@ -702,7 +800,8 @@ void VulkanManager::record_command_buffer(VkCommandBuffer buff, uint32_t image_i
     vkCmdBindPipeline(buff, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdSetViewport(buff, 0, 1, &viewport);
     vkCmdSetScissor(buff, 0, 1, &scissors);
-    vkCmdDraw(buff, 3, 1, 0, 0);
+    vkCmdBindVertexBuffers(buff, 0, 1, vertex_buffers, offsets);
+    vkCmdDraw(buff, static_cast<uint32_t>(verticles.size()), 1, 0, 0);
     vkCmdEndRenderPass(buff);
 
     if (vkEndCommandBuffer(buff) != VK_SUCCESS)
@@ -819,6 +918,8 @@ void VulkanManager::process()
 void VulkanManager::cleanup()
 {
     remove_swap_chain();
+    vkDestroyBuffer(logical_device, vertex_buffer, nullptr);
+    vkFreeMemory(logical_device, vertex_buffer_memory, nullptr);
     for (size_t sync_obj_index = 0; sync_obj_index < MAX_FRAMES_IN_FLIGHT; sync_obj_index++)
     {
         vkDestroySemaphore(logical_device, image_semaphores[sync_obj_index], nullptr);
