@@ -4,6 +4,7 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define TINYOBJLOADER_IMPLEMENTATION
 
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
@@ -11,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <stb_image.h>
+#include <tiny_obj_loader.h>
 
 #include <stdexcept>
 #include <iostream>
@@ -67,7 +69,7 @@ struct UniformBufferObject
     glm::mat4 proj;
 };
 
-class VulkanManager 
+class VulkanManager
 {
 public:
     VulkanManager()
@@ -80,24 +82,10 @@ public:
 
 private:
     const int MAX_FRAMES_IN_FLIGHT = 2;
+    const string model_path = "Models/donut.obj";
 
-    vector<Vertex> verticles =
-    {
-        {{-0.5, -0.5, 0.0}, {0.1, 0.5, 0.3}, {1.0, 0.0}},
-        {{0.5, -0.5, 0.0}, {0.1, 0.2, 1.0}, {0.0, 0.0}},
-        {{0.5, 0.5, 0.0}, {0.0, 0.5, 0.5}, {0.0, 1.0}},
-        {{-0.5, 0.5, 0.0}, {1.0, 0.5, 1.0}, {1.0, 1.0}},
-
-        {{-0.5, -0.5, -0.5}, {0.1, 0.5, 0.3}, {1.0, 0.0}},
-        {{0.5, -0.5, -0.5}, {0.1, 0.2, 1.0}, {0.0, 0.0}},
-        {{0.5, 0.5, -0.5}, {0.0, 0.5, 0.5}, {0.0, 1.0}},
-        {{-0.5, 0.5, -0.5}, {1.0, 0.5, 1.0}, {1.0, 1.0}}
-    };
-    vector<uint16_t> indices = {
-        0, 1, 2, 2, 3, 0,
-        4, 5, 6, 6, 7, 4,
-        1, 4, 5, 5, 1, 0
-    };
+    vector<Vertex> verticles;
+    vector<uint32_t> indices;
     vector<const char*> device_extensions = 
     {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
@@ -176,6 +164,7 @@ private:
     void add_buffer(VkBuffer& buff, VkDeviceMemory& buff_memory, VkDeviceSize size,
         VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
     void copy_buffer(VkBuffer from_buff, VkBuffer to_buff, VkDeviceSize size);
+    void load_model();
     void add_vertex_buffer();
     void add_indices_buffer();
     void add_uniform_buffers();
@@ -226,6 +215,7 @@ void VulkanManager::start_vulkan()
     add_texture_image();
     add_texture_image_view();
     add_texture_sampler();
+    load_model();
     add_vertex_buffer();
     add_indices_buffer();
     add_uniform_buffers();
@@ -594,6 +584,39 @@ void VulkanManager::copy_buffer(VkBuffer from_buff, VkBuffer to_buff, VkDeviceSi
     end_single_time_commands(command_buff);
 }
 
+void VulkanManager::load_model()
+{
+    tinyobj::attrib_t attrib;
+    vector<tinyobj::shape_t> shapes;
+    vector<tinyobj::material_t> materials;
+    string warn, err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, model_path.c_str()))
+        cout << warn + err;
+    for (const auto& shape : shapes) {
+        for (const auto& index : shape.mesh.indices) {
+            Vertex vertex{};
+
+            vertex.position = 
+            {
+                attrib.vertices[3 * index.vertex_index + 0],
+                attrib.vertices[3 * index.vertex_index + 1],
+                attrib.vertices[3 * index.vertex_index + 2]
+            };
+
+            vertex.tex_coord = {
+                attrib.texcoords[2 * index.texcoord_index + 0],
+                attrib.texcoords[2 * index.texcoord_index + 1]
+            };
+
+            vertex.color = { 1.0f, 1.0f, 1.0f };
+
+            verticles.push_back(vertex);
+            indices.push_back(indices.size());
+        }
+    }
+}
+
 void VulkanManager::add_vertex_buffer()
 {
     VkDeviceSize size = sizeof(verticles[0]) * verticles.size();
@@ -619,7 +642,7 @@ void VulkanManager::add_vertex_buffer()
 
 void VulkanManager::add_indices_buffer()
 {
-    VkDeviceSize size = sizeof(indices);
+    VkDeviceSize size = sizeof(indices[0]) * indices.size();
     VkBuffer staging_buffer;
     VkDeviceMemory staging_buffer_memory;
     void* data;
@@ -664,7 +687,7 @@ void VulkanManager::update_uniform_buffer(uint32_t current_frame)
     auto current_time = chrono::high_resolution_clock::now();
     float time = chrono::duration<float, chrono::seconds::period>(current_time - start_time).count();
 
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     ubo.proj = glm::perspective(glm::radians(45.0f), (float) swap_chain_extent.width / swap_chain_extent.height, 0.1f, 10.0f);
 
@@ -1368,7 +1391,7 @@ void VulkanManager::record_command_buffer(VkCommandBuffer buff, uint32_t image_i
     vkCmdSetViewport(buff, 0, 1, &viewport);
     vkCmdSetScissor(buff, 0, 1, &scissors);
     vkCmdBindVertexBuffers(buff, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(buff, index_buffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(buff, index_buffer, 0, VK_INDEX_TYPE_UINT32);
     vkCmdBindDescriptorSets(buff, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
         0, 1, &descriptor_sets[current_frame], 0, nullptr);
     vkCmdDrawIndexed(buff, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);

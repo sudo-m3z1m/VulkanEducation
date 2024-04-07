@@ -104,7 +104,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\VulkanSDK\1.3.275.0\Include\glfw-3.3.9.bin.WIN64\include;D:\VulkanSDK\1.3.275.0\Include\glm;D:\VulkanSDK\1.3.275.0\Include;D:\VulkanSDK\1.3.275.0\Include\stb-master;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\VulkanSDK\1.3.275.0\Include\tinyobjloader-release;D:\VulkanSDK\1.3.275.0\Include\glfw-3.3.9.bin.WIN64\include;D:\VulkanSDK\1.3.275.0\Include\glm;D:\VulkanSDK\1.3.275.0\Include;D:\VulkanSDK\1.3.275.0\Include\stb-master;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -122,7 +122,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\VulkanSDK\1.3.275.0\Include\glfw-3.3.9.bin.WIN64\include;D:\VulkanSDK\1.3.275.0\Include\glm;D:\VulkanSDK\1.3.275.0\Include;D:\VulkanSDK\1.3.275.0\Include\stb-master;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\VulkanSDK\1.3.275.0\Include\tinyobjloader-release;D:\VulkanSDK\1.3.275.0\Include\glfw-3.3.9.bin.WIN64\include;D:\VulkanSDK\1.3.275.0\Include\glm;D:\VulkanSDK\1.3.275.0\Include;D:\VulkanSDK\1.3.275.0\Include\stb-master;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
